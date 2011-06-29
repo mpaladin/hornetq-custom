@@ -1,0 +1,115 @@
+#!/bin/sh
+
+HORNETQ_USER="hornetq"
+service=`basename "$0"`
+
+export HORNETQ_HOME="/usr/share/hornetq"
+HORNETQ_CONFIG_DIR=${HORNETQ_CONFIG_DIR:-/etc/hornetq}
+HORNETQ_DATA_DIR=${HORNETQ_DATA_DIR:-/var/cache/hornetq}
+
+if [ -f "${HORNETQ_BASE}/etc/hornetq.profile" ] ; then
+  . "${HORNETQ_BASE}/etc/hornetq.profile"
+fi
+
+FILENAME=hornetq-beans.xml
+
+get_pid() {
+  pid=`ps -eo pid,args | grep -P ".+java.*-Dhornetq\.config\.dir=/var/lib/hornetq/instancename/etc.*org.hornetq.integration.bootstrap.HornetQBootstrapServer $FILENAME$" | grep -v grep | awk '{print $1}'`
+}
+
+status() {
+  get_pid
+  if [ "x$pid" = "x" ]; then
+    return 0 
+  else
+    return 1
+  fi
+}
+
+force_stop() {
+  get_pid
+  [ "x$pid" != "x" ] && kill -9 $pid
+}
+
+stop() {
+  if [ `id -u` = `id -u $HORNETQ_USER` ] ; then
+    touch $HORNETQ_CONFIG_DIR/STOP_ME;
+  else
+    su ${HORNETQ_USER} -s /bin/sh -c "touch $HORNETQ_CONFIG_DIR/STOP_ME;"
+  fi
+  return 0
+}
+
+start() {
+  export CLASSPATH=$HORNETQ_CONFIG_DIR:$HORNETQ_HOME/schemas/
+  for i in `ls $HORNETQ_HOME/lib/*.jar`; do
+    CLASSPATH=$i:$CLASSPATH
+  done
+
+  export HORNETQ_JVM_ARGS=${HORNETQ_JVM_ARGS:-"-XX:+UseParallelGC -XX:+AggressiveOpts -XX:+UseFastAccessorMethods -Xms768M -Xmx1536M -Dhornetq.config.dir=$HORNETQ_CONFIG_DIR -Djava.util.logging.config.file=$HORNETQ_CONFIG_DIR/logging.properties -Djava.library.path=/usr/share/hornetq/libaio -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=3000 -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Ddata.dir=$HORNETQ_DATA_DIR"}
+  
+  if [ `id -u` = `id -u $HORNETQ_USER` ] ; then
+    nohup java $HORNETQ_JVM_ARGS -classpath $CLASSPATH -Dcom.sun.management.jmxremote org.hornetq.integration.bootstrap.HornetQBootstrapServer $FILENAME > /dev/null 2>&1 &
+  else
+    su ${HORNETQ_USER} -s /bin/sh -c "nohup java $HORNETQ_JVM_ARGS -classpath $CLASSPATH -Dcom.sun.management.jmxremote org.hornetq.integration.bootstrap.HornetQBootstrapServer $FILENAME > /dev/null 2>&1 &"
+  fi
+  return 0
+}
+
+case $1 in
+  start)
+    status
+    if [ $? -eq 1 ] ; then
+      echo "${service} already running ($pid)"
+      exit 1
+    fi
+    echo "Starting ${service}"
+    start
+    exit $?
+  ;;
+
+  force-stop)
+    status
+    if [ $? -eq 0 ] ; then
+      echo "${service} is not running"
+    else
+      echo "Ungracefully Stopping ${service}"
+      force_stop
+    fi
+    exit 0
+  ;;
+
+  stop)
+    status
+    if [ $? -eq 0 ] ; then
+      echo "${service} is not running"
+    else
+      echo "Gracefully Stopping ${service}"
+      stop
+    fi
+    exit $?
+  ;;
+
+  restart)
+    echo "Restarting ${service}"
+    stop
+    sleep 1
+    start
+    exit $?
+  ;;
+
+  status)
+    status
+    if [ $? -eq 0 ] ; then
+      echo "${service} is stopped"
+    else
+      echo "${service} is running (${pid})"
+    fi
+    exit 0
+  ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart|status|force-stop}" >&2
+    exit 2
+  ;;
+esac
