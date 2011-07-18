@@ -1,0 +1,5 @@
+Test to create our own HornetQ rpm.
+
+This includes a standard Koji-style Makefile to "make sources".
+
+
